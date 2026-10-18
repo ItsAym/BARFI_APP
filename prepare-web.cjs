@@ -1,0 +1,12 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const file = path.join(process.cwd(), 'app.json');
+if (!fs.existsSync(file)) throw new Error('Kjør fra barfi-mappen der app.json ligger.');
+const original = fs.readFileSync(file, 'utf8');
+const config = JSON.parse(original);
+if (!config.expo) throw new Error('Finner ikke expo-feltet i app.json.');
+if (!fs.existsSync(file + '.barfi-backup')) fs.writeFileSync(file + '.barfi-backup', original);
+config.expo.name = 'BARFI';
+config.expo.web = { ...config.expo.web, output: 'single' };
+fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n');
+console.log('app.json er satt opp for BARFI web. Originalen er sikkerhetskopiert.');

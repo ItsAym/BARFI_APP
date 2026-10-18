@@ -1,0 +1,59 @@
+BARFI – webapp med Firebase Hosting
+
+Dette er oppdateringsfiler til ditt eksisterende Expo-prosjekt, ikke et helt nytt prosjekt.
+Firebase-prosjekt og data beholdes. iPhone bruker fortsatt sin egen datovelger.
+
+1. KOPIER FILENE
+Pakk ut ZIP-filen. Kopier innholdet i BARFI_Web til barfi-prosjektmappen der package.json ligger.
+Slå sammen src-mappene og erstatt filer med samme navn. Behold alle øvrige filer og assets-bildene dine.
+Ikke erstatt hele prosjektmappen. Ikke slett eksisterende src/app/_layout.tsx.
+_layout.web.tsx er et eget enkelt navigasjonsoppsett for nettleser uten eksempelappens faner.
+Bildene er ikke inkludert i pakken, og bildestiene må finnes i ditt eksisterende prosjekt.
+
+2. KLARGJØR I POWERSHELL FRA BARFI-MAPPEN
+npx.cmd expo install react-dom react-native-web @expo/metro-runtime firebase @react-native-community/datetimepicker
+node prepare-web.cjs
+
+Scriptet setter expo.web.output til single i app.json og bevarer de andre innstillingene.
+En sikkerhetskopi lagres som app.json.barfi-backup.
+Hvis prosjektet ditt bruker app.config.js eller app.config.ts som overstyrer app.json, sett web.output til single der også.
+
+3. TEST PÅ PC
+npx.cmd expo start --web
+Logg inn med din eksisterende Firebase-bruker.
+Test kalender og klokke, begge avdelinger, flere endringer og historikk.
+Last siden på nytt: data skal beholdes. Ikke publiser før dette fungerer.
+Stopp utviklingsserveren med Ctrl+C før neste steg om nødvendig.
+
+4. BYGG OG TEST NETTSIDEN
+npx.cmd expo export --platform web
+npx.cmd expo serve
+Åpne adressen som vises og test den eksporterte appen. Stopp med Ctrl+C.
+
+5. LOGG INN HOS FIREBASE OG PUBLISER
+npx.cmd --yes firebase-tools login
+Logg inn med Google-kontoen som eier BARFI-prosjektet.
+npx.cmd --yes firebase-tools deploy --only hosting --project barfi-af8eb
+Dette publiserer bare nettsiden fra dist. Firestore-reglene og databasedataene endres ikke av kommandoen.
+Bruk Hosting URL-adressen som faktisk vises i terminalen når publiseringen lykkes.
+Hvis Firebase ber om å opprette et Hosting-nettsted, åpne Firebase Console → Hosting → Get started og fullfør opprettelsen for prosjektet, og prøv kommandoen igjen.
+Ikke velg App Hosting; denne appen bruker vanlig statisk Firebase Hosting.
+
+6. PÅ IPHONE
+Åpne den publiserte adressen i Safari. Test innlogging, dato, lagring og historikk.
+Velg Del → Legg til på Hjem-skjermen. Gi den navnet BARFI.
+Når du bruker den publiserte lenken, kan PC-en være avslått. Internett er nødvendig for lagring.
+Dette oppsettet har ingen offline service worker og lover ikke offline bruk.
+Bare UID-en du allerede har godkjent får tilgang. Flere ansatte trenger egne godkjente brukere.
+Ikke del passordet ditt med ansatte.
+
+7. SENERE OPPDATERINGER
+Etter kodeendringer, test igjen og kjør:
+npx.cmd expo export --platform web
+npx.cmd --yes firebase-tools deploy --only hosting --project barfi-af8eb
+Du bruker samme lenke videre.
+
+KONTROLLER UTFØRT HER
+TypeScript/JSX-syntaks, webkonfigurasjon og datovelgerens konvertering er kontrollert lokalt.
+Hele Expo-prosjektet, bildeassetene, telefonen og din Firebase-konto er ikke tilgjengelig her.
+Web-build, faktisk nettleservisning og publisering må derfor verifiseres på din PC.
