@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import type { User } from 'firebase/auth';
-import { collection, doc, limit, onSnapshot, orderBy, query, runTransaction, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, getCountFromServer, getDocs, limit, onSnapshot, orderBy, query, runTransaction, serverTimestamp, Timestamp, where } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import DateTimePicker from '../components/barfi-date-picker';
 import {
   Image,
+  useWindowDimensions,
   Platform,
   Pressable,
   ScrollView,
@@ -24,7 +25,7 @@ const departments = ['Mortensrud', 'Kalbakken'];
 type StockItem = {
   name: string;
   quantity: number;
-  unit: 'brett' | 'eske';
+  unit: 'brett' | 'eske' | 'pcs';
   image?: ImageSourcePropType;
 };
 
@@ -50,7 +51,8 @@ const mithaiList: StockItem[] = [
   {
     name: 'Besan Ladoo',
     quantity: 0,
-    unit: 'eske',
+    unit: 'brett',
+    image: require('../../assets/images/Mithai/Besan_Laddo.png'),
   },
   {
     name: 'Besan Patisa',
@@ -79,6 +81,7 @@ const mithaiList: StockItem[] = [
     name: 'Gajar Barfi',
     quantity: 0,
     unit: 'brett',
+    image: require('../../assets/images/Mithai/Gajar_Barfi.png'),
   },
   {
     name: 'Gajar Halwa',
@@ -93,18 +96,19 @@ const mithaiList: StockItem[] = [
     image: require('../../assets/images/Mithai/Ghulab_Jamun_Cream.png'),
   },
   {
-    name: 'Gulab Jamon (Liten)',
-    quantity: 0,
-    unit: 'eske',
-  },
-  {
-    name: 'Gulab Jamon (Runde)',
+    name: 'Gulab Jamon (Små)',
     quantity: 0,
     unit: 'eske',
     image: require('../../assets/images/Mithai/Ghulab_Jamun_Runde.png'),
   },
   {
-    name: 'Gulab Jamon (Stor)',
+    name: 'Gulab Jamon (Runde Stor)',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Mithai/Ghulab_Jamun_Runde.png'),
+  },
+  {
+    name: 'Gulab Jamon (Lange)',
     quantity: 0,
     unit: 'eske',
     image: require('../../assets/images/Mithai/Ghulab Jamun Lange.png'),
@@ -167,6 +171,7 @@ const mithaiList: StockItem[] = [
     name: 'Patisa Pink',
     quantity: 0,
     unit: 'brett',
+    image: require('../../assets/images/Mithai/Pink_Patisa.png'),
   },
   {
     name: 'Pista Barfi',
@@ -198,10 +203,90 @@ const mithaiList: StockItem[] = [
     unit: 'brett',
     image: require('../../assets/images/Mithai/White_Coconut_Barfi.png'),
   },
+  {
+    name: 'Shish Kebab',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Bakery/Nan_Kebab.png'),
+  },
+  {
+    name: 'Kylling Kebab',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Bakery/Nan_Kebab.png'),
+  },
+  {
+    name: 'Channay',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Food/channay.jpg'),
+  },
+  {
+    name: 'Red Saus',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Food/red_dressing.jpg'),
+  },
+  {
+    name: 'White Saus',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Food/white_dressing.jpg'),
+  },
+  {
+    name: 'Qeema Naan',
+    quantity: 0,
+    unit: 'pcs',
+    image: require('../../assets/images/Bakery/Naan.png'),
+  },
+  {
+    name: 'Alo Naan',
+    quantity: 0,
+    unit: 'pcs',
+    image: require('../../assets/images/Bakery/Naan.png'),
+  },
+  {
+    name: 'Mango Lassi',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Dessert/Mango_Lassi.png'),
+  },
+  {
+    name: 'Falooda',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Dessert/Falooda.png'),
+  },
+  {
+    name: 'Seviyan',
+    quantity: 0,
+    unit: 'eske',
+    image: require('../../assets/images/Food/falooda_sev.jpg'),
+  }    
 ];
 
 const emptyQuantities = Object.fromEntries(mithaiList.map((item) => [item.name, 0]));
-const allowedUid = '5IGP26tTnoXdTTelgg4gUAgmjQo1';
+
+// Nye varer som ikke finnes i eldre lagerdokumenter starter med 0.
+// Eksisterende verdier bevares; ugyldige verdier skjules ikke med en konvertering.
+function normalizeQuantities(values?: Record<string, number>): Record<string, number> {
+  return { ...emptyQuantities, ...values };
+}
+
+function invalidQuantityName(values: Record<string, number>) {
+  return mithaiList.find((item) =>
+    !Number.isSafeInteger(values[item.name]) || values[item.name] < 0 || values[item.name] > 100000
+  )?.name;
+}
+
+type StaffProfile = { name: string; role: 'admin' | 'employee'; active: true };
+
+function isActiveStaff(value: unknown): value is StaffProfile {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as Record<string, unknown>;
+  return entry.active === true && (entry.role === 'admin' || entry.role === 'employee')
+    && typeof entry.name === 'string' && entry.name.trim().length > 0 && entry.name.length <= 100;
+}
 
 function errorMessage(error: unknown) {
   const code = (error as { code?: string })?.code;
@@ -213,27 +298,83 @@ function errorMessage(error: unknown) {
 
 function ProductImage({ item }: { item: StockItem }) {
   const [imageFailed, setImageFailed] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [zoom, setZoom] = useState(1);
+  const { width, height } = useWindowDimensions();
+  const imageWidth = Math.max(1, Math.min(width - 32, 900));
+  const imageHeight = Math.max(1, Math.min(height * 0.6, 700));
 
-    if (item.image && !imageFailed) {
+  function closeImage() {
+    setExpanded(false);
+    setZoom(1);
+  }
+
+  if (item.image && !imageFailed) {
     return (
-      <Image
-        source={item.image}
-        style={styles.productImage}
-        resizeMode="cover"
-        accessibilityLabel={item.name}
-        onError={() => setImageFailed(true)}
-      />
+      <>
+        <Pressable
+          onPress={() => { setZoom(1); setExpanded(true); }}
+          accessibilityRole="button"
+          accessibilityLabel={`Forstørr bildet av ${item.name}`}
+          accessibilityHint="Åpner produktbildet i en større visning"
+          style={styles.imageButton}
+        >
+          <Image
+            source={item.image}
+            style={styles.productImage}
+            resizeMode="cover"
+            accessibilityLabel={item.name}
+            onError={() => setImageFailed(true)}
+          />
+        </Pressable>
+
+        {expanded && (
+          <Modal visible transparent animationType="fade" onRequestClose={closeImage}>
+            <SafeAreaView style={styles.imageViewer}>
+              <View style={styles.imageViewerHeader}>
+                <Text style={styles.imageViewerTitle}>{item.name}</Text>
+                <Pressable onPress={closeImage} style={styles.imageViewerClose}
+                  accessibilityRole="button" accessibilityLabel="Lukk produktbildet">
+                  <Text style={styles.imageViewerButtonText}>Lukk ×</Text>
+                </Pressable>
+              </View>
+
+              <View style={[styles.imageViewport, { width: imageWidth, height: imageHeight }]}>
+                <ScrollView nestedScrollEnabled style={{ flex: 1 }}
+                  contentContainerStyle={{ minHeight: imageHeight }}>
+                  <ScrollView horizontal nestedScrollEnabled
+                    contentContainerStyle={{ minWidth: imageWidth }}>
+                    <Image source={item.image} resizeMode="contain"
+                      style={{ width: imageWidth * zoom, height: imageHeight * zoom }}
+                      accessibilityLabel={`Stort bilde av ${item.name}`} />
+                  </ScrollView>
+                </ScrollView>
+              </View>
+
+              <View style={styles.imageZoomControls}>
+                <Pressable onPress={() => setZoom((value) => Math.max(1, value - 0.5))}
+                  disabled={zoom <= 1} accessibilityRole="button" accessibilityLabel="Zoom ut"
+                  style={[styles.imageZoomButton, zoom <= 1 && styles.disabledButton]}>
+                  <Text style={styles.imageViewerButtonText}>−</Text>
+                </Pressable>
+                <Text style={styles.imageZoomValue}>{Math.round(zoom * 100)} %</Text>
+                <Pressable onPress={() => setZoom((value) => Math.min(3, value + 0.5))}
+                  disabled={zoom >= 3} accessibilityRole="button" accessibilityLabel="Zoom inn"
+                  style={[styles.imageZoomButton, zoom >= 3 && styles.disabledButton]}>
+                  <Text style={styles.imageViewerButtonText}>+</Text>
+                </Pressable>
+              </View>
+              <Text style={styles.imageViewerHint}>Bruk − og + for å zoome. Rull i bildet for å se detaljene.</Text>
+            </SafeAreaView>
+          </Modal>
+        )}
+      </>
     );
   }
 
   return (
-    <View
-      style={styles.imagePlaceholder}
-      accessibilityLabel={`Bilde mangler for ${item.name}`}
-    >
-      <Text style={styles.imageLetter}>
-        {item.name.charAt(0)}
-      </Text>
+    <View style={styles.imagePlaceholder} accessibilityLabel={`Bilde mangler for ${item.name}`}>
+      <Text style={styles.imageLetter}>{item.name.charAt(0)}</Text>
       <Text style={styles.imageCaption}>Bilde</Text>
     </View>
   );
@@ -262,9 +403,45 @@ function formatTime(value: Date) {
     String(value.getMinutes()).padStart(2, '0')].join(':');
 }
 
+// Hver bekreftelse lagres separat. Det gamle korrigeringsdokumentet teller fortsatt.
+type HistoryCorrection = { cutoffMillis: number };
+type CorrectionPreview = { id: string; cutoff: Timestamp; counts: Record<string, number> };
+
+function correctionDays(recordedAt: string, corrections: HistoryCorrection[]) {
+  const millis = Date.parse(recordedAt);
+  return corrections.filter((entry) => millis <= entry.cutoffMillis).length;
+}
+
+function shiftDateOneDay(date: string, days = 1) {
+  const [year, month, day] = date.split('-').map(Number);
+  const value = new Date(Date.UTC(year, month - 1, day));
+  value.setUTCDate(value.getUTCDate() + days);
+  return [value.getUTCFullYear(), String(value.getUTCMonth() + 1).padStart(2, '0'),
+    String(value.getUTCDate()).padStart(2, '0')].join('-');
+}
+
+// Visning bruker norsk tid. Originale servertidsstempler endres aldri.
+function displayRecordedTime(value: string, days = 0) {
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('nb-NO', {
+    timeZone: 'Europe/Oslo', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  }).formatToParts(instant);
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value ?? '';
+  const original = `${part('year')}-${part('month')}-${part('day')}`;
+  const date = shiftDateOneDay(original, days);
+  const [year, month, day] = date.split('-');
+  return `${day}.${month}.${year}, ${part('hour')}:${part('minute')}:${part('second')}`;
+}
+
 export default function HomeScreen() {
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [profile, setProfile] = useState<StaffProfile | null>(null);
+  const [staffReady, setStaffReady] = useState(false);
+  const [staffError, setStaffError] = useState('');
+  const isAdmin = profile?.role === 'admin';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loginBusy, setLoginBusy] = useState(false);
@@ -284,6 +461,13 @@ export default function HomeScreen() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
+  const [corrections, setCorrections] = useState<HistoryCorrection[]>([]);
+  const [correctionReady, setCorrectionReady] = useState(false);
+  const [correctionError, setCorrectionError] = useState('');
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [correctionPreview, setCorrectionPreview] = useState<CorrectionPreview | null>(null);
+  const [correctionBusy, setCorrectionBusy] = useState(false);
+  const correctionBusyRef = useRef(false);
   const ready = loadedDepartment === department;
   const items = mithaiList.map((item) => ({ ...item, quantity: quantities[item.name] ?? 0 }));
   const inStockCount = items.filter((item) => item.quantity > 0).length;
@@ -292,6 +476,9 @@ export default function HomeScreen() {
   const changedCount = changedNames.length;
 
   useEffect(() => onAuthStateChanged(auth, (current) => {
+    setProfile(null);
+    setStaffReady(false);
+    setStaffError('');
     setUser(current);
     setAuthReady(true);
     setEditing(false);
@@ -304,7 +491,41 @@ export default function HomeScreen() {
   }), []);
 
   useEffect(() => {
-    if (!user || user.uid !== allowedUid) return;
+    setProfile(null);
+    setStaffReady(false);
+    setStaffError('');
+    if (!user) return;
+    return onSnapshot(doc(db, 'staff', user.uid), (snapshot) => {
+      const entry = snapshot.exists() ? snapshot.data() : null;
+      if (isActiveStaff(entry)) {
+        setProfile(entry);
+        setEmployee(entry.name);
+        setStaffError('');
+      } else {
+        setProfile(null);
+        setEmployee('');
+        setEditing(false);
+        setCorrectionOpen(false);
+        setLoadedDepartment('');
+        setQuantities(emptyQuantities);
+        setLogs([]);
+        setStaffError('Du er ikke godkjent eller er deaktivert. Kontakt administrator.');
+      }
+      setStaffReady(true);
+    }, (err) => {
+      setProfile(null);
+      setStaffReady(true);
+      setEditing(false);
+      setCorrectionOpen(false);
+      setLoadedDepartment('');
+      setQuantities(emptyQuantities);
+      setLogs([]);
+      setStaffError(errorMessage(err));
+    });
+  }, [user]);
+
+  useEffect(() => {
+    if (!user || !profile) return;
     let active = true;
     let stopState = () => {};
     let stopLogs = () => {};
@@ -326,7 +547,7 @@ export default function HomeScreen() {
         if (!active) return;
         stopState = onSnapshot(stateRef, { includeMetadataChanges: true }, (snapshot) => {
           if (!active || !snapshot.exists()) return;
-          setQuantities(snapshot.data().quantities);
+          setQuantities(normalizeQuantities(snapshot.data().quantities));
           setLoadedDepartment(department);
           setOnline(!snapshot.metadata.fromCache);
           setDatabaseError('');
@@ -338,8 +559,8 @@ export default function HomeScreen() {
           snapshot.docs.forEach((entry) => {
             const batch = entry.data();
             mithaiList.forEach((item) => {
-              const before = batch.before[item.name];
-              const after = batch.after[item.name];
+              const before = batch.before[item.name] ?? 0;
+              const after = batch.after[item.name] ?? 0;
               if (before !== after) rows.push({
                 id: `${entry.id}-${item.name}`, department, product: item.name,
                 employee: batch.employee, date: batch.date, time: batch.time,
@@ -356,7 +577,66 @@ export default function HomeScreen() {
     }
     void connect();
     return () => { active = false; stopState(); stopLogs(); };
-  }, [user, department]);
+  }, [user, department, profile]);
+
+  useEffect(() => {
+    setCorrections([]);
+    setCorrectionReady(false);
+    setCorrectionOpen(false);
+    if (!user || !profile) return;
+    return onSnapshot(collection(db, 'historyDateCorrections'), (snapshot) => {
+      if (snapshot.metadata.hasPendingWrites) return;
+      setCorrections(snapshot.docs.map((document) => ({
+        cutoffMillis: (document.data().cutoff as Timestamp).toMillis(),
+      })));
+      setCorrectionReady(true);
+      setCorrectionError('');
+    }, (err) => { setCorrectionError(errorMessage(err)); setCorrectionReady(false); });
+  }, [user, profile]);
+
+  async function previewCorrection() {
+    if (!isAdmin || correctionBusyRef.current || !correctionReady) return;
+    correctionBusyRef.current = true;
+    setCorrectionBusy(true);
+    setCorrectionError('');
+    setCorrectionPreview(null);
+    try {
+      // Bruk siste lagringstid fra serveren, ikke telefonens klokke, som skjæringspunkt.
+      const latest = await Promise.all(departments.map((dept) => getDocs(query(
+        collection(db, 'departments', dept, 'batches'), orderBy('recordedAt', 'desc'), limit(1),
+      ))));
+      const timestamps = latest.flatMap((snapshot) => snapshot.docs.map((entry) => entry.data().recordedAt as Timestamp));
+      if (!timestamps.length) throw new Error('Det finnes ingen historikk å korrigere.');
+      const cutoff = timestamps.reduce((a, b) => a.toMillis() > b.toMillis() ? a : b);
+      const countResults = await Promise.all(departments.map((dept) => getCountFromServer(query(
+        collection(db, 'departments', dept, 'batches'), where('recordedAt', '<=', cutoff),
+      ))));
+      setCorrectionPreview({ id: doc(collection(db, 'historyDateCorrections')).id, cutoff, counts: Object.fromEntries(departments.map((dept, i) => [dept, countResults[i].data().count])) });
+      setCorrectionOpen(true);
+    } catch (err) { setCorrectionError(errorMessage(err)); }
+    finally { correctionBusyRef.current = false; setCorrectionBusy(false); }
+  }
+
+  async function applyCorrection() {
+    if (!isAdmin || correctionBusyRef.current || !correctionPreview || !user) return;
+    correctionBusyRef.current = true;
+    setCorrectionBusy(true);
+    setCorrectionError('');
+    try {
+      const ref = doc(db, 'historyDateCorrections', correctionPreview.id);
+      await runTransaction(db, async (transaction) => {
+        const existing = await transaction.get(ref);
+        if (existing.exists()) return; // Samme bekreftelse skal aldri lagres to ganger.
+        transaction.set(ref, {
+          uid: user.uid, days: 1, departments: ['Mortensrud', 'Kalbakken'],
+          cutoff: correctionPreview.cutoff,
+          counts: correctionPreview.counts, recordedAt: serverTimestamp(),
+        });
+      });
+      setCorrectionOpen(false);
+    } catch (err) { setCorrectionError(errorMessage(err)); }
+    finally { correctionBusyRef.current = false; setCorrectionBusy(false); }
+  }
 
   async function login() {
     if (loginBusy) return;
@@ -378,8 +658,9 @@ export default function HomeScreen() {
   function openEditor() {
     if (!ready || !online || databaseError) return;
     setSelectedDate(new Date());
-    setDraft({ ...quantities });
-    setBaseline({ ...quantities });
+    const initial = normalizeQuantities(quantities);
+    setDraft({ ...initial });
+    setBaseline({ ...initial });
     setPicker(null);
     setError('');
     setEditing(true);
@@ -395,11 +676,12 @@ export default function HomeScreen() {
 
   async function saveChanges() {
     if (savingRef.current) return;
-    if (!user || !ready || !online) return setError('Du må være logget inn og ha kontakt med databasen.');
+    if (!user || !profile || !ready || !online) return setError('Du må være logget inn og ha kontakt med databasen.');
     if (!employee.trim() || employee.trim().length > 100) return setError('Skriv navn (maks 100 tegn).');
     if (!changedCount) return setError('Endre antallet på minst én mithai-sort.');
-    if (mithaiList.some((item) => !Number.isSafeInteger(draft[item.name]) || draft[item.name] < 0 || draft[item.name] > 100000)) {
-      return setError('Antall må være hele tall mellom 0 og 100 000.');
+    const draftError = invalidQuantityName(draft);
+    if (draftError) {
+      return setError(`${draftError}: Antall må være et helt tall mellom 0 og 100 000.`);
     }
     savingRef.current = true;
     setSaving(true);
@@ -412,18 +694,21 @@ export default function HomeScreen() {
         if (!snapshot.exists()) throw new Error('Avdelingen finnes ikke. Åpne appen på nytt.');
         const state = snapshot.data();
         const before = state.quantities as Record<string, number>;
+        const currentQuantities = normalizeQuantities(before);
+        const storedError = invalidQuantityName(currentQuantities);
+        if (storedError) throw new Error(`${storedError}: Lagerverdien i databasen er ugyldig. Kontakt administrator.`);
         // Avvis endringer på varer andre har oppdatert etter at skjemaet ble åpnet.
-        if (changedNames.some((name) => before[name] !== baseline[name])) {
+        if (changedNames.some((name) => currentQuantities[name] !== baseline[name])) {
           throw new Error('En annen telefon har endret en av disse varene. Avbryt og åpne Rediger data på nytt for å hente oppdaterte tall.');
         }
-        const after = { ...before };
+        const after = { ...currentQuantities };
         changedNames.forEach((name) => { after[name] = draft[name]; });
         transaction.update(stateRef, {
           quantities: after, revision: state.revision + 1,
           lastBatchId: batchRef.id, updatedBy: user.uid, updatedAt: serverTimestamp(),
         });
         transaction.set(batchRef, {
-          uid: user.uid, employee: employee.trim(),
+          uid: user.uid, employee: profile.name,
           date: formatDate(selectedDate), time: formatTime(selectedDate),
           recordedAt: serverTimestamp(), before, after,
         });
@@ -434,15 +719,15 @@ export default function HomeScreen() {
     finally { savingRef.current = false; setSaving(false); }
   }
 
-  if (!authReady || !user || user.uid !== allowedUid) {
+  if (!authReady || !user || !staffReady || !profile) {
     return (
       <SafeAreaView style={styles.screen}>
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
           <Text style={styles.brand}>BARFI</Text>
           <Text style={styles.heading}>Logg inn</Text>
-          {!authReady ? <Text style={styles.emptyText}>Sjekker innlogging …</Text> : user ? (
+          {!authReady || (user && !staffReady) ? <Text style={styles.emptyText}>Sjekker innlogging og ansattilgang …</Text> : user ? (
             <>
-              <Text style={styles.errorText}>Denne brukeren har ikke tilgang til BARFI.</Text>
+              <Text style={styles.errorText}>{staffError || 'Denne brukeren har ikke tilgang til BARFI.'}</Text>
               <Pressable style={styles.editButton} onPress={() => void signOut(auth)}><Text style={styles.editButtonText}>Logg ut</Text></Pressable>
             </>
           ) : (
@@ -467,6 +752,7 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.screen}>
       <ScrollView contentContainerStyle={styles.content}>
         <Text style={styles.brand}>BARFI</Text>
+        <Text style={styles.subtitle}>{profile.name} · {isAdmin ? 'Administrator' : 'Ansatt'}</Text>
         <Text style={styles.subtitle}>Velg avdeling:</Text>
         <Pressable onPress={() => void signOut(auth).catch((err) => setDatabaseError(errorMessage(err)))} accessibilityRole="button">
           <Text style={[styles.departmentText, { marginTop: 12 }]}>Logg ut</Text>
@@ -562,28 +848,65 @@ export default function HomeScreen() {
 
         <Text style={styles.heading}>Historikk · {department}</Text>
         <Text style={styles.productStatus}>Viser de siste 50 lagringene. Eldre historikk beholdes i Firebase.</Text>
-        {logs.length === 0 && <Text style={styles.emptyText}>Ingen endringer registrert ennå.</Text>}
-        {logs.map((log) => (
+        {!correctionReady && (
+          <Text style={styles.emptyText}>
+            {correctionError ? 'Historikken kunne ikke lastes. Prøv å laste siden på nytt.' : 'Henter historikk …'}
+          </Text>
+        )}
+        {correctionReady && logs.length === 0 && <Text style={styles.emptyText}>Ingen endringer registrert ennå.</Text>}
+        {correctionReady && logs.map((log) => {
+          const days = correctionDays(log.recordedAt, corrections);
+          const displayDate = shiftDateOneDay(log.date, days);
+          return (
           <View key={log.id} style={[styles.empty, { marginBottom: 10 }]}>
             <Text style={styles.productName}>{log.product}</Text>
             <Text style={styles.emptyText}>
               {log.change > 0 ? '+' : ''}{log.change} · {log.before} → {log.after}{' '}
               {log.unit === 'eske' && log.after !== 1 ? 'esker' : log.unit}
             </Text>
-            <Text style={styles.emptyText}>{log.employee} · {log.date} kl. {log.time}</Text>
+            <Text style={styles.emptyText}>{log.employee} · {displayDate} kl. {log.time}</Text>
             <Text style={styles.productStatus}>
-              Loggført: {log.recordedAt ? new Date(log.recordedAt).toLocaleString('nb-NO') : 'Lagrer …'}
+              Loggført: {log.recordedAt ? displayRecordedTime(log.recordedAt, days) : 'Lagrer …'}
             </Text>
           </View>
-        ))}
+          );
+        })}
+        {isAdmin && <View>
+          <Pressable disabled={!correctionReady || correctionBusy} accessibilityRole="button"
+            style={[styles.editButton, (!correctionReady || correctionBusy) && styles.disabledButton]}
+            onPress={() => void previewCorrection()}>
+            <Text style={styles.editButtonText}>{correctionBusy ? 'Henter forhåndsvisning …' : 'Korriger tidligere datoer +1 dag'}</Text>
+          </Pressable>
+          {!!correctionError && <Text style={styles.errorText}>{correctionError}</Text>}
+        </View>}
       </ScrollView>
+      <Modal visible={correctionOpen && isAdmin} animationType="slide" onRequestClose={() => { if (!correctionBusyRef.current) setCorrectionOpen(false); }}>
+        <SafeAreaView style={styles.screen}>
+          <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
+            <Text style={styles.heading}>Flytt tidligere datoer +1 dag</Text>
+            <Text style={styles.emptyText}>Alle lagringene som telles under, flyttes ytterligere én kalenderdag frem i begge avdelinger. Dette inkluderer eldre historikk som ikke vises i listen.</Text>
+            {departments.map((dept) => <Text key={dept} style={styles.fieldLabel}>
+              {dept}: {correctionPreview?.counts[dept] ?? 0} lagringer
+            </Text>)}
+            <Text style={styles.emptyText}>Både registreringsdato og vist lagringstid flyttes frem. Klokkeslett og lagerbeholdning beholdes. Nye lagringer etter forhåndsvisningen påvirkes ikke. Hver ny bekreftelse legger til én ekstra dag. Originale tidspunkter beholdes i databasen.</Text>
+            {!!correctionError && <Text style={styles.errorText}>{correctionError}</Text>}
+            <Pressable style={[styles.editButton, correctionBusy && styles.disabledButton]} disabled={correctionBusy}
+              onPress={() => void applyCorrection()} accessibilityRole="button">
+              <Text style={styles.editButtonText}>{correctionBusy ? 'Lagrer korrigering …' : 'Bekreft +1 dag i begge avdelinger'}</Text>
+            </Pressable>
+            <Pressable style={styles.cancelButton} disabled={correctionBusy} onPress={() => setCorrectionOpen(false)} accessibilityRole="button">
+              <Text style={styles.departmentText}>Avbryt</Text>
+            </Pressable>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
       <Modal visible={editing} animationType="slide" onRequestClose={closeEditor}>
         <SafeAreaView style={styles.screen}>
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled" automaticallyAdjustKeyboardInsets>
             <Text style={styles.heading}>Rediger data</Text>
             <Text style={styles.subtitle}>{department}</Text>
             <Text style={styles.fieldLabel}>Navn</Text>
-            <TextInput style={styles.input} value={employee} onChangeText={setEmployee} maxLength={100} editable={!saving}
+            <TextInput style={styles.input} value={employee} onChangeText={setEmployee} maxLength={100} editable={false}
               placeholder="Skriv navnet ditt" placeholderTextColor="#8A7B82" accessibilityLabel="Navn" />
             <Text style={styles.fieldLabel}>Dato og tidspunkt</Text>
             <View style={styles.dateButtons}>
@@ -673,6 +996,17 @@ export default function HomeScreen() {
 }
 
 const styles = StyleSheet.create({
+  imageButton: { borderRadius: 12, overflow: 'hidden', flexShrink: 0 },
+  imageViewer: { flex: 1, backgroundColor: 'rgba(20, 12, 17, 0.97)', alignItems: 'center', justifyContent: 'center' },
+  imageViewerHeader: { width: '100%', maxWidth: 940, flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
+  imageViewerTitle: { flex: 1, color: '#FFFFFF', fontSize: 21, fontWeight: '700' },
+  imageViewerClose: { minHeight: 44, paddingHorizontal: 14, justifyContent: 'center', borderRadius: 12, backgroundColor: '#522738' },
+  imageViewerButtonText: { color: '#FFFFFF', fontSize: 20, fontWeight: '700' },
+  imageViewport: { overflow: 'hidden', borderRadius: 16, backgroundColor: '#21171D' },
+  imageZoomControls: { flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 16 },
+  imageZoomButton: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 12, backgroundColor: '#522738' },
+  imageZoomValue: { color: '#FFFFFF', minWidth: 68, textAlign: 'center', fontSize: 17 },
+  imageViewerHint: { color: '#E5C6CF', fontSize: 13, textAlign: 'center', padding: 16 },
   dateButtons: { flexDirection: 'row', gap: 10 },
   editorRow: { flexDirection: 'column', alignItems: 'stretch' },
   editorProduct: { flexDirection: 'row', alignItems: 'center', gap: 12 },

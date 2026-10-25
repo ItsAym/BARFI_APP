@@ -1,4 +1,4 @@
-BARFI – webapp med Firebase Hosting
+    BARFI – webapp med Firebase Hosting
 
 Dette er oppdateringsfiler til ditt eksisterende Expo-prosjekt, ikke et helt nytt prosjekt.
 Firebase-prosjekt og data beholdes. iPhone bruker fortsatt sin egen datovelger.
